@@ -65,7 +65,7 @@ This repository serves as a public showcase of the DevSync AI architecture and c
 
 If you are interested in acquiring this project, collaborating, or discussing the architecture further, please contact:
 
-**📧 Email:** [majidhussain3897@gmail.com](mailto:majidhussain3897@gmail.com)
+**📧 Email:** [majidhussain3897@gmail.com](mailto:majidhussain.ai5@gmail.com)
 
 ---
 *Designed and Developed by Majid Hussain.*
