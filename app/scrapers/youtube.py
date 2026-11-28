@@ -2,13 +2,23 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import os
 import logging
+
 import feedparser
+import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled
 from youtube_transcript_api.proxies import WebshareProxyConfig
 
 logger = logging.getLogger(__name__)
+
+RSS_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+}
 
 
 class Transcript(BaseModel):
@@ -62,18 +72,35 @@ class YouTubeScraper:
             # Expected API limitations where transcripts are genuinely missing/disabled
             return None
         except Exception:
-            # FIXED: Log unexpected transient transcript errors with traceback instead of permanently trapping as None
+            # Log unexpected transient transcript errors with traceback instead of permanently trapping as None
             logger.exception("Unexpected error fetching transcript for video_id: %s", video_id)
             raise
 
     def get_latest_videos(self, channel_id: str, hours: int = 24) -> List[ChannelVideo]:
         rss_url = self._get_rss_url(channel_id)
-        feed = feedparser.parse(rss_url)
-        
-        # FIXED: Surface RSS parse failures instead of silent swallowing
+
+        try:
+            response = httpx.get(
+                rss_url,
+                headers=RSS_HEADERS,
+                timeout=15.0,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("Skipping YouTube channel %s — HTTP fetch failed: %s", channel_id, exc)
+            return []
+
+        feed = feedparser.parse(response.text)
+
         if getattr(feed, "bozo", False) and not getattr(feed, "entries", None):
-            exc = feed.bozo_exception
-            raise RuntimeError(f"RSS fetch/parse failed for {rss_url}: {exc}") from exc
+            logger.warning(
+                "Skipping YouTube channel %s — invalid RSS XML (%s): %s",
+                channel_id,
+                rss_url,
+                feed.bozo_exception,
+            )
+            return []
 
         if not getattr(feed, "entries", None):
             return []
@@ -83,7 +110,7 @@ class YouTubeScraper:
         seen_ids: set[str] = set()
 
         for entry in feed.entries:
-            link = entry.get("link", "")
+            link = entry.get("link") or ""
             if not link or "/shorts/" in link:
                 continue
 
@@ -100,11 +127,11 @@ class YouTubeScraper:
 
                 videos.append(
                     ChannelVideo(
-                        title=entry.get("title", "Untitled Video"),
+                        title=(entry.get("title") or "").strip() or "Untitled Video",
                         url=link,
                         video_id=video_id,
                         published_at=published_time,
-                        description=entry.get("summary", ""),
+                        description=entry.get("summary") or "",
                     )
                 )
 
